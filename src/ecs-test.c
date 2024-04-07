@@ -252,8 +252,8 @@ static MunitResult test_ecs_clone_multi(
         }
     }
     de_ecs  *cloned = de_ecs_clone(r);
-    StrSet *entts1 = strset_new();
-    StrSet *entts2 = strset_new();
+    StrSet *entts1 = strset_new(NULL);
+    StrSet *entts2 = strset_new(NULL);
 
     de_each(r, iter_set_add_multi, entts1);
     de_each(cloned, iter_set_add_multi, entts2);
@@ -290,8 +290,8 @@ static MunitResult test_ecs_clone_mono(
         }
     }
     de_ecs  *cloned = de_ecs_clone(r);
-    StrSet *entts1 = strset_new();
-    StrSet *entts2 = strset_new();
+    StrSet *entts1 = strset_new(NULL);
+    StrSet *entts2 = strset_new(NULL);
 
     de_each(r, iter_set_add_mono, entts1);
     de_each(cloned, iter_set_add_mono, entts2);
@@ -1781,5 +1781,6 @@ static const MunitSuite test_suite = {
 };
 
 int main(int argc, char **argv) {
+    koh_hashers_init();
     return munit_suite_main(&test_suite, (void*) "µnit", argc, argv);
 }
