@@ -1,10 +1,11 @@
 return {
-    {
-        not_dependencies = {
-            "lfs",
-        },
-        artifact = "ecs-test",
-        main = "main.c",
-        src = "src",
-    },
+   {
+      artifact = "ecs-test",
+      main = "main.c",
+      src = "src",
+      not_dependencies = {
+         "lfs",
+         "resvg",
+      },
+   },
 }
