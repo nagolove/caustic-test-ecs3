@@ -910,6 +910,9 @@ static MunitResult test_emplace_destroy(
     de_entity entts[1000] = {0};
     int entts_num = 0;
 
+    de_cp_type types[] = { cp_cell }; 
+    size_t types_num = sizeof(types) / sizeof(types[0]);
+
     for (int k = 0; k < 3; k++) {
 
         for (int x = 0; x < 50; x++) {
@@ -923,7 +926,7 @@ static MunitResult test_emplace_destroy(
 
             for (int i = 0; i < 5; i++) {
 
-                for (de_view v = de_create_view(r, 1, (de_cp_type[1]) { cp_cell }); 
+                for (de_view v = de_view_create(r, types_num, types);
                         de_view_valid(&v); de_view_next(&v)) {
 
                     munit_assert(de_valid(r, de_view_entity(&v)));
@@ -937,9 +940,8 @@ static MunitResult test_emplace_destroy(
 
             }
 
-            for (de_view v = de_create_view(r, 1, (de_cp_type[1]) { cp_cell }); 
+            for (de_view v = de_view_create(r, types_num, types);
                     de_view_valid(&v); de_view_next(&v)) {
-
 
                 munit_assert(de_valid(r, de_view_entity(&v)));
                 struct Cell *c = de_view_get_safe(&v, cp_cell);
@@ -968,7 +970,7 @@ static MunitResult test_emplace_destroy(
     }
     */
 
-    for (de_view v = de_create_view(r, 1, (de_cp_type[1]) { cp_cell }); 
+    for (de_view v = de_view_create(r, types_num, types);
         de_view_valid(&v); de_view_next(&v)) {
 
         munit_assert(de_valid(r, de_view_entity(&v)));
@@ -1112,7 +1114,7 @@ static MunitResult test_has(
             munit_assert(de_has(r, e, cp_cell) == false);
         }
 
-        de_view_single v = de_create_view_single(r, cp_triple);
+        de_view_single v = de_view_single_create(r, cp_triple);
         for(; de_view_single_valid(&v); de_view_single_next(&v)) {
             de_entity e = de_view_single_entity(&v);
             munit_assert(de_has(r, e, cp_triple) == true);
@@ -1174,7 +1176,7 @@ static MunitResult test_view_get(
 
     printf("--------------------------\n");
     //htable_each(table_cell, iter_table_cell, NULL);
-    printf("table_cell count %d\n", htable_count(table_cell));
+    printf("table_cell count %zu\n", htable_count(table_cell));
     printf("--------------------------\n");
 
     struct Couple {
@@ -1228,7 +1230,7 @@ static MunitResult test_view_get(
         */
 
     {
-        de_view v = de_create_view(r, 1, (de_cp_type[]){cp_cell});
+        de_view v = de_view_create(r, 1, (de_cp_type[]){cp_cell});
         for (; de_view_valid(&v); de_view_next(&v)) {
             de_entity e = de_view_entity(&v);
             const struct Cell *cell1 = de_view_get(&v, cp_cell);
@@ -1249,7 +1251,7 @@ static MunitResult test_view_get(
     // */
 
     {
-        de_view v = de_create_view(r, 1, (de_cp_type[]){cp_triple});
+        de_view v = de_view_create(r, 1, (de_cp_type[]){cp_triple});
         for (;de_view_valid(&v); de_view_next(&v)) {
             de_entity e = de_view_entity(&v);
             const struct Triple *tr1 = de_view_get(&v, cp_triple);
@@ -1269,7 +1271,7 @@ static MunitResult test_view_get(
 
     // Часть сущностей с компонентами cp_cell и cp_triple
     {
-        de_view v = de_create_view(r, 2, (de_cp_type[]){cp_triple, cp_cell});
+        de_view v = de_view_create(r, 2, (de_cp_type[]){cp_triple, cp_cell});
         for (;de_view_valid(&v); de_view_next(&v)) {
             de_entity e = de_view_entity(&v);
             const struct Triple *tr = de_view_get(&v, cp_triple);
@@ -1340,7 +1342,7 @@ static MunitResult test_view_single_get(
 
     printf("--------------------------\n");
     //htable_each(table_cell, iter_table_cell, NULL);
-    printf("table_cell count %d\n", htable_count(table_cell));
+    printf("table_cell count %zu\n", htable_count(table_cell));
     printf("--------------------------\n");
 
     struct Couple {
@@ -1396,7 +1398,7 @@ static MunitResult test_view_single_get(
         */
 
     {
-        de_view v = de_create_view(r, 1, (de_cp_type[]){cp_cell});
+        de_view v = de_view_create(r, 1, (de_cp_type[]){cp_cell});
         for (; de_view_valid(&v); de_view_next(&v)) {
             de_entity e = de_view_entity(&v);
             const struct Cell *cell1 = de_view_get(&v, cp_cell);
@@ -1417,7 +1419,7 @@ static MunitResult test_view_single_get(
     // */
 
     {
-        de_view v = de_create_view(r, 1, (de_cp_type[]){cp_triple});
+        de_view v = de_view_create(r, 1, (de_cp_type[]){cp_triple});
         for (;de_view_valid(&v); de_view_next(&v)) {
             de_entity e = de_view_entity(&v);
             const struct Triple *tr1 = de_view_get(&v, cp_triple);
@@ -1498,15 +1500,9 @@ static MunitResult test_sparse_1(
     de_sparse s = {};
     de_entity e1, e2, e3;
 
-    e1 = de_make_entity(
-        (de_entity_id) { .id = 100, }, (de_entity_ver) { .ver = 0 }
-    );
-    e2 = de_make_entity(
-        (de_entity_id) { .id = 10, }, (de_entity_ver) { .ver = 0 }
-    );
-    e3 = de_make_entity(
-        (de_entity_id) { .id = 11, }, (de_entity_ver) { .ver = 0 }
-    );
+    e1 = de_make_entity(de_entity_id(100), de_entity_ver(0));
+    e2 = de_make_entity(de_entity_id(10), de_entity_ver(0));
+    e3 = de_make_entity(de_entity_id(11), de_entity_ver(0));
 
     de_sparse_init(&s, 10);
 
@@ -1531,15 +1527,9 @@ static MunitResult test_sparse_2_non_seq_idx(
     de_sparse s = {};
     de_entity e1, e2, e3;
 
-    e1 = de_make_entity(
-        (de_entity_id) { .id = 1, }, (de_entity_ver) { .ver = 0 }
-    );
-    e2 = de_make_entity(
-        (de_entity_id) { .id = 0, }, (de_entity_ver) { .ver = 0 }
-    );
-    e3 = de_make_entity(
-        (de_entity_id) { .id = 3, }, (de_entity_ver) { .ver = 0 }
-    );
+    e1 = de_make_entity(de_entity_id(1), de_entity_ver(0));
+    e2 = de_make_entity(de_entity_id(0), de_entity_ver(0));
+    e3 = de_make_entity(de_entity_id(3), de_entity_ver(0));
 
     de_sparse_init(&s, 1);
 
@@ -1580,15 +1570,9 @@ static MunitResult test_sparse_2(
     de_sparse s = {};
     de_entity e1, e2, e3;
 
-    e1 = de_make_entity(
-        (de_entity_id) { .id = 1, }, (de_entity_ver) { .ver = 0 }
-    );
-    e2 = de_make_entity(
-        (de_entity_id) { .id = 2, }, (de_entity_ver) { .ver = 0 }
-    );
-    e3 = de_make_entity(
-        (de_entity_id) { .id = 3, }, (de_entity_ver) { .ver = 0 }
-    );
+    e1 = de_make_entity(de_entity_id(1), de_entity_ver(0));
+    e2 = de_make_entity(de_entity_id(2), de_entity_ver(0));
+    e3 = de_make_entity(de_entity_id(3), de_entity_ver(0));
 
     de_sparse_init(&s, 1);
 
