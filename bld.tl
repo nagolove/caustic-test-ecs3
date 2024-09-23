@@ -1,8 +1,7 @@
 -- vim: fdm=marker
 return {
     {
-        --[[
-        dependencies = {
+        proj_dependencies = {
             {
                 disabled = false,
                 build = "@build_with_cmake",
