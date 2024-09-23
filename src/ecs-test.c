@@ -17,6 +17,8 @@
 #include "koh_set.h"
 // }}}
 
+static const MunitSuite test_suite;
+
 /*
  Нужны структуры разной длины для тестирования менеджера памяти компонентной
  системы.
@@ -67,7 +69,8 @@ int components_num = 0;
 static koh_SetAction iter_print(
     const void *key, int key_len, void *udata
 ) {
-    printf("iter_print: e %u\n", *(de_entity*)key);
+    if (test_suite.verbose)
+        printf("iter_print: e %u\n", *(de_entity*)key);
     return koh_SA_next;
 }
 
@@ -87,7 +90,8 @@ static MunitResult test_emplace_1_insert_remove(
 
     for (int i = 0; i < passes; ++i) {
         de_entity entt = de_create(r);
-        printf("test_emplace_1_insert_remove: e %u\n", entt);
+        if (test_suite.verbose)
+            printf("test_emplace_1_insert_remove: e %u\n", entt);
         Comp_1 comp = Comp_1_new(&rng, entt);
 
         Comp_1 *c = de_emplace(r, entt, cp_type_1);
@@ -106,18 +110,21 @@ static MunitResult test_emplace_1_insert_remove(
 
     memset(remove_entts, 0, sizeof(remove_entts));
 
-    printf("test_emplace_1_insert_remove: callback iterator\n");
+    if (test_suite.verbose)
+        printf("test_emplace_1_insert_remove: callback iterator\n");
 
     set_each(set_e, iter_print, NULL);
 
-    printf("test_emplace_1_insert_remove: iterator\n");
+    if (test_suite.verbose)
+        printf("test_emplace_1_insert_remove: iterator\n");
 
     for (koh_SetView v = set_each_begin(set_e);
         set_each_valid(&v); set_each_next(&v)) {
 
         const de_entity *e = set_each_key(&v);
         assert(e);
-        printf("test_emplace_1_insert_remove: e %u\n", *e);
+        if (test_suite.verbose)
+            printf("test_emplace_1_insert_remove: e %u\n", *e);
     }
 
     /*while (remove_entts_num < remove_count) {*/
