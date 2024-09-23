@@ -103,6 +103,7 @@ static MunitResult test_emplace_1_insert_remove(
     // Выбрать случайные сущности из всех имеющихся
     de_entity remove_entts[remove_count];
     /*int remove_entts_num = 0;*/
+
     memset(remove_entts, 0, sizeof(remove_entts));
 
     printf("test_emplace_1_insert_remove: callback iterator\n");
