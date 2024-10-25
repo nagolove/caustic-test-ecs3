@@ -25,10 +25,11 @@ static const MunitSuite test_suite;
  */
 #define COMPONENT_NAME(n) Comp_## n
 
+// {{{ Определение компонента с конструктором экземпляра объекта
 #define COMPONENT_DEFINE(n)                                        \
 __attribute__((unused))                                            \
 typedef struct {                                                   \
-    uint32_t rng[n];                                               \
+    int32_t rng[n];                                                \
     int rng_num;                                                   \
     de_entity e;                                                   \
     UT_hash_handle hh;                                             \
@@ -57,7 +58,12 @@ static COMPONENT_NAME(n) Comp_##n##_new(                           \
     }                                                              \
     return ret;                                                    \
 }                                               
+// }}}
 
+// В скобках - размер массива со случайными данными, которые заполняются
+// при конструировании объекта соответсующей функцией - конструктором.
+// Массив чисел заданной длинны позволяет проверить наличие затирания памяти
+// со стороны de_ecs в компоненте.
 COMPONENT_DEFINE(1);
 COMPONENT_DEFINE(5);
 COMPONENT_DEFINE(17);
@@ -72,79 +78,6 @@ static koh_SetAction iter_print(
     if (test_suite.verbose)
         printf("iter_print: e %u\n", *(de_entity*)key);
     return koh_SA_next;
-}
-
-static MunitResult test_emplace_1_insert_remove(
-    const MunitParameter params[], void* data
-) {
-    de_ecs *r = de_ecs_new();
-
-    xorshift32_state rng = xorshift32_init();
-    de_ecs_register(r, cp_type_1);
-
-    /*const int passes = 10000;*/
-    const int passes = 10;
-
-    koh_Set *set_c = set_new(NULL),
-            *set_e = set_new(NULL);
-
-    for (int i = 0; i < passes; ++i) {
-        de_entity entt = de_create(r);
-        if (test_suite.verbose)
-            printf("test_emplace_1_insert_remove: e %u\n", entt);
-        Comp_1 comp = Comp_1_new(&rng, entt);
-
-        Comp_1 *c = de_emplace(r, entt, cp_type_1);
-        assert(c);
-
-        *c = comp;
-        set_add(set_c, c, sizeof(*c));
-        set_add(set_e, &entt, sizeof(entt));
-    }
-
-    // Удалить часть сущностей
-    int remove_count = passes / 3;
-    // Выбрать случайные сущности из всех имеющихся
-    de_entity remove_entts[remove_count];
-    /*int remove_entts_num = 0;*/
-
-    memset(remove_entts, 0, sizeof(remove_entts));
-
-    if (test_suite.verbose)
-        printf("test_emplace_1_insert_remove: callback iterator\n");
-
-    set_each(set_e, iter_print, NULL);
-
-    if (test_suite.verbose)
-        printf("test_emplace_1_insert_remove: iterator\n");
-
-    for (koh_SetView v = set_each_begin(set_e);
-        set_each_valid(&v); set_each_next(&v)) {
-
-        const de_entity *e = set_each_key(&v);
-        assert(e);
-        if (test_suite.verbose)
-            printf("test_emplace_1_insert_remove: e %u\n", *e);
-    }
-
-    /*while (remove_entts_num < remove_count) {*/
-    /*}*/
-
-    de_view_single view;
-    for (view = de_view_single_create(r, cp_type_1);
-         de_view_single_valid(&view);
-         de_view_single_next(&view)) {
-
-        de_entity e = de_view_single_entity(&view);
-        munit_assert(set_exist(set_e, &e, sizeof(e)) == true);
-        Comp_1 *c = de_view_single_get(&view);
-        munit_assert(set_exist(set_c, c, sizeof(*c)) == true);
-    }
-
-    set_free(set_c);
-    set_free(set_e);
-    de_ecs_free(r);
-    return MUNIT_OK;
 }
 
 static MunitResult test_emplace_1_insert(
@@ -194,6 +127,54 @@ static MunitResult test_emplace_1_insert(
 
     set_free(set_c);
     set_free(set_e);
+    de_ecs_free(r);
+    return MUNIT_OK;
+}
+
+static MunitResult test_emplace_1_insert_remove(
+    const MunitParameter params[], void* data
+) {
+    de_ecs *r = de_ecs_new();
+
+    xorshift32_state rng = xorshift32_init();
+    de_ecs_register(r, cp_type_1);
+
+    /*const int passes = 10000;*/
+    const int passes = 10;
+
+    //koh_Set *set_c = set_new(NULL),
+            //*set_e = set_new(NULL);
+    HTable  *set_c = htable_new(NULL),
+            *set_e = htable_new(NULL);
+
+    for (int i = 0; i < passes; ++i) {
+        de_entity entt = de_create(r);
+        Comp_1 comp = Comp_1_new(&rng, entt);
+        /*arr_e[arr_len] = entt;*/
+        /*arr_c[arr_len] = comp;*/
+
+        Comp_1 *c = de_emplace(r, entt, cp_type_1);
+        assert(c);
+
+        *c = comp;
+        htable_add(set_c, c, sizeof(*c), NULL, 0);
+        htable_add(set_e, &entt, sizeof(entt), NULL, 0);
+    }
+
+    de_view_single view;
+    for (view = de_view_single_create(r, cp_type_1);
+         de_view_single_valid(&view);
+         de_view_single_next(&view)) {
+
+        de_entity e = de_view_single_entity(&view);
+        /*munit_assert(set_exist(set_e, &e, sizeof(e)) == true);*/
+        munit_assert(htable_exist(set_e, &e, sizeof(e)) == true);
+        Comp_1 *c = de_view_single_get(&view);
+        munit_assert(htable_exist(set_c, c, sizeof(*c)) == true);
+    }
+
+    htable_free(set_c);
+    htable_free(set_e);
     de_ecs_free(r);
     return MUNIT_OK;
 }
@@ -288,6 +269,7 @@ static const MunitSuite test_suite = {
 int main(int argc, char **argv) {
     koh_hashers_init();
 
+    // Регистрация компонентов для примера
     components[components_num++] = cp_type_1;
     components[components_num++] = cp_type_5;
     components[components_num++] = cp_type_17;
