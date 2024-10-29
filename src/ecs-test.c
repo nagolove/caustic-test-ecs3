@@ -859,50 +859,17 @@ static MunitResult test_destroy_zero(
     return MUNIT_OK;
 }
 
-/*
-    Задача - протестировать уничтожение сущностей вместе со всеми связанными
-    компонентами.
-    --
-    Создается определенное количество сущностей, к каждой крепится от одного
-    до 3х компонент.
-    --
-    Случайным образом удаляются несколько сущностей.
-    Случайным образом добавляются несколько сущностей.
-    --
-    Проверка, что состояние ecs контейнера соответствует ожидаемому.
-    Проверка происходит через de_view c одним компонентом
- */
-__attribute__ ((unused)) static MunitResult test_destroy(
-    const MunitParameter params[], void* data
-) {
-    printf("de_null %u\n", de_null);
-    srand(time(NULL));
+static void _test_destroy(de_cp_type comps[3]) {
 
-    /*struct StrSet *set = strset_new();*/
-    /*struct koh_Set *set_ecs = set_new();*/
+    de_cp_type  comp1 = comps[0],
+                comp2 = comps[1],
+                comp3 = comps[2];
 
-    // {{{ components
-    const static de_cp_type comp1 = {
-        .cp_id = 0,
-        .cp_sizeof = sizeof(int),
-        .initial_cap = 10000,
-        .name = "comp1",
-    };
-
-    const static de_cp_type comp2 = {
-        .cp_id = 1,
-        .cp_sizeof = sizeof(int),
-        .initial_cap = 10000,
-        .name = "comp2",
-    };
-
-    const static de_cp_type comp3 = {
-        .cp_id = 2,
-        .cp_sizeof = sizeof(int),
-        .initial_cap = 10000,
-        .name = "comp3",
-    };
-    // }}}
+    for (int i = 0; i < 3; i++) {
+        de_cp_type c = comps[i];
+        de_cp_type_print(c);
+        printf("\n");
+    }
 
     struct TestDestroyCtx ctx = {
         .r = de_ecs_new(),
@@ -937,6 +904,51 @@ __attribute__ ((unused)) static MunitResult test_destroy(
 
     set_free(ctx.set);
     de_ecs_free(ctx.r);
+}
+
+/*
+    Задача - протестировать уничтожение сущностей вместе со всеми связанными
+    компонентами.
+    --
+    Создается определенное количество сущностей, к каждой крепится от одного
+    до 3х компонент.
+    --
+    Случайным образом удаляются несколько сущностей.
+    Случайным образом добавляются несколько сущностей.
+    --
+    Проверка, что состояние ecs контейнера соответствует ожидаемому.
+    Проверка происходит через de_view c одним компонентом
+ */
+static MunitResult test_create_emplace_destroy(
+    const MunitParameter params[], void* data
+) {
+    printf("de_null %u\n", de_null);
+    //srand(time(NULL));
+
+    /*struct StrSet *set = strset_new();*/
+    /*struct koh_Set *set_ecs = set_new();*/
+
+    _test_destroy((de_cp_type[3]) {
+        {
+            .cp_id = 0,
+            .cp_sizeof = sizeof(int),
+            .initial_cap = 10000,
+            .name = "comp1",
+        },
+        {
+            .cp_id = 1,
+            .cp_sizeof = sizeof(int),
+            .initial_cap = 10000,
+            .name = "comp2",
+        },
+        {
+            .cp_id = 2,
+            .cp_sizeof = sizeof(int),
+            .initial_cap = 10000,
+            .name = "comp3",
+        }
+    });
+
     return MUNIT_OK;
 }
 
@@ -1574,6 +1586,7 @@ static MunitResult test_sparse_1(
     return MUNIT_OK;
 }
 
+// XXX: Что проверяет данный код?
 static MunitResult test_sparse_2_non_seq_idx(
     const MunitParameter params[], void* data
 ) {
@@ -1936,7 +1949,7 @@ static MunitTest test_suite_tests[] = {
    //FIXME:
   {
     (char*) "/destroy",
-    test_destroy,
+    test_create_emplace_destroy,
     NULL,
     NULL,
     MUNIT_TEST_OPTION_NONE,
