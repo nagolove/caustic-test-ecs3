@@ -436,7 +436,7 @@ struct TestDestroyCtx {
     de_cp_type          components[3];
     int                 comp_num;
     de_ecs              *r;
-    struct koh_Set      *set;
+    HTable              *set;
     int                 entt_num, last_comp_value;
     int                 index_target, index_current;
     struct EntityState  estate_target;
@@ -468,8 +468,8 @@ static char *estate2str(const struct EntityState *estate) {
     return buf;
 }
 
-static koh_SetAction iter_set_search_and_remove(
-    const void *key, int key_len, void *udata
+static HTableAction iter_set_search_and_remove(
+    const void *key, int key_len, void *value, int value_len, void *udata
 ) {
     assert(udata);
     assert(key);
@@ -490,12 +490,12 @@ static koh_SetAction iter_set_search_and_remove(
             );
         ctx->estate_target = *key_state;
         ctx->estate_target.found = true;
-        return koh_SA_remove_break;
+        return HTABLE_ACTION_BREAK;
     }
 
     ctx->index_current++;
 
-    return koh_SA_next;
+    return HTABLE_ACTION_NEXT;
 }
 
 // Удаляет одну случайную сущность из системы.
@@ -526,7 +526,8 @@ static struct TestDestroyCtx destroy_entt(struct TestDestroyCtx ctx) {
         printf("index_target %d\n", ctx.index_target);
 
     // итератор поиска и удаления одной записи из множества
-    set_each(ctx.set, iter_set_search_and_remove, &ctx);
+    /*set_each(ctx.set, iter_set_search_and_remove, &ctx);*/
+    htable_each(ctx.set, iter_set_search_and_remove, &ctx);
 
     munit_assert_uint32(ctx.estate_target.e, !=, de_null);
     munit_assert(ctx.estate_target.found);
@@ -548,6 +549,7 @@ static struct TestDestroyCtx destroy_entt(struct TestDestroyCtx ctx) {
     return ctx;
 }
 
+// XXX: Что делает функция?
 static struct TestDestroyCtx create_one(struct TestDestroyCtx ctx) {
     assert(ctx.r);
 
@@ -585,25 +587,28 @@ static struct TestDestroyCtx create_one(struct TestDestroyCtx ctx) {
     if (verbose_print)
         printf("e %u, fingerprint %s\n", estate.e, fingerprint);
 
-    set_add(ctx.set, &estate, sizeof(estate));
+    //set_add(ctx.set, &estate, sizeof(estate));
+    htable_add(ctx.set, &estate, sizeof(estate), NULL, 0);
+
     ctx.entt_num++;
 
     return ctx;
 }
 
-static koh_SetAction set_print_each(
-    const void *key, int key_len, void *udata
+static HTableAction  set_print_each(
+    const void *key, int key_len, void *value, int value_len, void *udata
 ) {
     assert(key);
     printf("    %s\n", estate2str(key));
-    return koh_SA_next;
+    return HTABLE_ACTION_NEXT;
 }
 
-static void estate_set_print(koh_Set *set) {
+static void estate_set_print(HTable *set) {
     if (verbose_print) {
         printf("estate {\n");
-        set_each(set, set_print_each, NULL);
-        printf("} (size = %d)\n", set_size(set));
+        /*set_each(set, set_print_each, NULL);*/
+        htable_each(set, set_print_each, NULL);
+        printf("} (size = %ld)\n", htable_count(set));
     }
 }
 
@@ -632,14 +637,23 @@ static bool iter_ecs_each(de_ecs *r, de_entity e, void *udata) {
 
     if (verbose_print)
         printf("iter_ecs_each: search estate %s\n", estate2str(&estate));
-    bool exists = set_exist(ctx->set, &estate, sizeof(estate));
+
+    /*bool exists = set_exist(ctx->set, &estate, sizeof(estate));*/
+    bool exists = htable_exist(ctx->set, &estate, sizeof(estate));
     //bool exists = false;
 
     if (verbose_print)
         printf("estate {\n");
+
+    /*
     for (struct koh_SetView v = set_each_begin(ctx->set);
         set_each_valid(&v); set_each_next(&v)) {
-        const struct EntityState *key = set_each_key(&v);
+        */
+    for (HTableIterator v = htable_iter_new(ctx->set);
+            htable_iter_valid(&v); htable_iter_next(&v)) {
+
+        /*const struct EntityState *key = set_each_key(&v);*/
+        const struct EntityState *key = htable_iter_key(&v, NULL);
         
         if (!key) {
             fprintf(stderr, "set_each_key return NULL\n");
@@ -653,7 +667,8 @@ static bool iter_ecs_each(de_ecs *r, de_entity e, void *udata) {
             printf("    %s\n", estate2str(key));
     }
     if (verbose_print)
-        printf("} (size = %d)\n", set_size(ctx->set));
+        /*printf("} (size = %d)\n", set_size(ctx->set));*/
+        printf("} (size = %ld)\n", htable_count(ctx->set));
     
     if (!exists) {
         if (verbose_print)
@@ -873,7 +888,7 @@ static void _test_destroy(de_cp_type comps[3]) {
 
     struct TestDestroyCtx ctx = {
         .r = de_ecs_new(),
-        .set = set_new(NULL),
+        .set = htable_new(NULL),
         .entt_num = 0,
         .comp_num = 3,
     };
@@ -902,7 +917,7 @@ static void _test_destroy(de_cp_type comps[3]) {
 
     }
 
-    set_free(ctx.set);
+    htable_free(ctx.set);
     de_ecs_free(ctx.r);
 }
 
@@ -928,26 +943,113 @@ static MunitResult test_create_emplace_destroy(
     /*struct StrSet *set = strset_new();*/
     /*struct koh_Set *set_ecs = set_new();*/
 
-    _test_destroy((de_cp_type[3]) {
+
+
+    de_cp_type setups[][3] = {
+        // {{{
+
         {
-            .cp_id = 0,
-            .cp_sizeof = sizeof(int),
-            .initial_cap = 10000,
-            .name = "comp1",
+            {
+                .cp_id = 0,
+                .cp_sizeof = sizeof(int),
+                .initial_cap = 10000,
+                .name = "comp1",
+            },
+            {
+                .cp_id = 1,
+                .cp_sizeof = sizeof(int),
+                .initial_cap = 10000,
+                .name = "comp2",
+            },
+            {
+                .cp_id = 2,
+                .cp_sizeof = sizeof(int),
+                .initial_cap = 10000,
+                .name = "comp3",
+            }
         },
+
+
         {
-            .cp_id = 1,
-            .cp_sizeof = sizeof(int),
-            .initial_cap = 10000,
-            .name = "comp2",
+            {
+                .cp_id = 0,
+                .cp_sizeof = sizeof(int64_t),
+                .initial_cap = 10,
+                .name = "comp1",
+            },
+            {
+                .cp_id = 1,
+                .cp_sizeof = sizeof(int64_t),
+                .initial_cap = 10,
+                .name = "comp2",
+            },
+            {
+                .cp_id = 2,
+                .cp_sizeof = sizeof(int64_t),
+                .initial_cap = 10,
+                .name = "comp3",
+            }
         },
+
+
+        /*
         {
-            .cp_id = 2,
-            .cp_sizeof = sizeof(int),
-            .initial_cap = 10000,
-            .name = "comp3",
-        }
-    });
+            {
+                .cp_id = 0,
+                .cp_sizeof = sizeof(char) + sizeof(char),
+                .initial_cap = 10000,
+                .name = "comp1",
+            },
+            {
+                .cp_id = 1,
+                .cp_sizeof = sizeof(char) + sizeof(char),
+                .initial_cap = 10000,
+                .name = "comp2",
+            },
+            {
+                .cp_id = 2,
+                .cp_sizeof = sizeof(char) + sizeof(char),
+                .initial_cap = 10000,
+                .name = "comp3",
+            }
+        },
+        
+        //*/
+
+        /*
+
+        {
+            {
+                .cp_id = 0,
+                .cp_sizeof = sizeof(char),
+                .initial_cap = 1,
+                .name = "comp1",
+            },
+            {
+                .cp_id = 1,
+                .cp_sizeof = sizeof(char),
+                .initial_cap = 1,
+                .name = "comp2",
+            },
+            {
+                .cp_id = 2,
+                .cp_sizeof = sizeof(char),
+                .initial_cap = 1,
+                .name = "comp3",
+            }
+        },
+
+        // */
+
+        // }}}
+    };
+    int setups_num = sizeof(setups) / sizeof(setups[0]);
+
+    printf("setups_num %d\n", setups_num);
+    for (int j = 0; j < setups_num; j++) {
+        _test_destroy(setups[j]);
+    }
+
 
     return MUNIT_OK;
 }
