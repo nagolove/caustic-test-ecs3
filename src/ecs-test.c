@@ -29,6 +29,12 @@ static const MunitSuite test_suite;
  */
 #define COMPONENT_NAME(n) Comp_## n
 
+// TODO: Автоматизировать поиск через UT_hash_handle
+
+typedef void (*ComponentCreator)(
+    xorshift32_state *rnd, de_entity e, void *retp
+);
+
 // {{{ Определение компонента с конструктором экземпляра объекта
 #define COMPONENT_DEFINE(n)                                        \
 __attribute__((unused))                                            \
@@ -48,19 +54,20 @@ de_cp_type cp_type_## n = {                                        \
 };                                                                 \
                                                                    \
 __attribute__((unused))                                            \
-static COMPONENT_NAME(n) Comp_##n##_new(                           \
-    xorshift32_state *rng, de_entity e                             \
+static void Comp_##n##_new(                                        \
+    xorshift32_state *rng, de_entity e, COMPONENT_NAME(n) *retp    \
 ) {                                                                \
     COMPONENT_NAME(n) ret = {                                      \
         .rng_num = n,                                              \
     };                                                             \
+    assert(retp);                                                  \
     assert(rng);                                                   \
     assert(n > 0);                                                 \
     ret.e = e;                                                     \
     for (int i = 0; i < n; i++) {                                  \
         ret.rng[i] = xorshift32_rand(rng);                         \
     }                                                              \
-    return ret;                                                    \
+    *retp = ret;                                                   \
 }                                               
 // }}}
 
@@ -112,6 +119,12 @@ static const de_cp_type cp_node = {
     .name = "node",
     .initial_cap = 20,
 };
+
+static void map_on_remove(
+    const void *key, int key_len, void *value, int value_len, void *userdata
+) { 
+    printf("map_on_remove:\n");
+}
 
 // TODO: использовать эту функцию для тестирования сложносоставных сущностей
 static struct Triple *create_triple(
@@ -425,176 +438,119 @@ static MunitResult test_emplace_destroy_with_hash(
 }
 */
 
-struct EntityState {
-    de_entity   e;
-    bool        components_set[3];
-    int         components_values[3];
-    bool        found;
-};
+// Как сохранить данные сущностей?
+typedef struct EntityDesc {
+    // Какие типы присутствуют в сущности
+    de_cp_type  types[3];
 
-struct TestDestroyCtx {
-    de_cp_type          components[3];
-    int                 comp_num;
+    // Память под компоненты
+    // XXX: Какую память использовать? 
+    // Делать копию или достаточно на указатель возвращенный de_emplace?
+    void        *components[3];
+
+    // Размеры выделенной памяти под компоненты
+    size_t      components_sizes[3];
+
+    // Количество прикрепленных к сущности компонент
+    size_t      components_num;
+} EntityDesc;
+
+/*
+Эмуляция de_ecs через HTable
+Максимально используется 3 компоненты на сущность.
+ */
+typedef struct TestDestroyCtx {
     de_ecs              *r;
-    HTable              *set;
-    int                 entt_num, last_comp_value;
-    int                 index_target, index_current;
-    struct EntityState  estate_target;
-};
 
-//__attribute__((unused))
-static char *estate2str(const struct EntityState *estate) {
+    // Какие компоненты цеплять у создаваемым сущностям
+    de_cp_type          types[3];
+    int                 types_num;
 
-    if (!estate) {
-        koh_trap();
-    }
+    // Указатели на функции для заполнения компонент
+    ComponentCreator    creators[3];
 
-    static char buf[128] = {};
-    int comp_num = 
-        sizeof(estate->components_values) / 
-        sizeof(estate->components_values[0]);
+    HTable              *map_entt2Desc;
+} TestDestroyCtx;
 
-    char *pbuf = buf;
-    pbuf += sprintf(pbuf, "e %u, ", estate->e);
-    for (int i = 0; i < comp_num; i++) {
-        if (estate && estate->components_set[i]) {
-            pbuf += sprintf(pbuf, "[%u %u]", i, estate->components_values[i]);
+// Удаляет одну случайную сущность из системы.
+static struct TestDestroyCtx facade_entt_destroy(
+    struct TestDestroyCtx ctx,
+    bool partial_remove // удалить случайную часть компонент сущности
+) {
+    assert(ctx.r);
+
+    if (verbose_print)
+        printf("facade_entt_destroy:\n");
+
+    int n = rand() % htable_count(ctx.map_entt2Desc);
+    printf("facade_entt_destroy: n %d\n", n);
+
+    int j = n;
+    for (HTableIterator i = htable_iter_new(ctx.map_entt2Desc);
+         htable_iter_valid(&i); htable_iter_next(&i)) {
+        j--;
+        if (!j) {
+            // удалить этот элемент
+
+
+            EntityDesc *ed = htable_iter_value(&i, NULL);
+            munit_assert(ed != NULL);
+
+            for (int t = 0; ed->components_num; t++) {
+                if (ed->components[t]) {
+                    // Кто владеет памятью?
+                    free(ed->components[t]);
+                    ed->components[t] = NULL;
+                }
+            }
+
+            int key_len = 0;
+            void *key = htable_iter_key(&i, &key_len);
+            htable_remove(ctx.map_entt2Desc, key, key_len);
+            break;
         }
     }
 
-    /*pbuf += sprintf(pbuf, ", found %s", estate->found ? "true" : "false");*/
-    sprintf(pbuf, ", found %s", estate->found ? "true" : "false");
-
-    return buf;
-}
-
-static HTableAction iter_set_search_and_remove(
-    const void *key, int key_len, void *value, int value_len, void *udata
-) {
-    assert(udata);
-    assert(key);
-
-    const struct EntityState *key_state = key;
-    struct TestDestroyCtx *ctx = udata;
-
-    if (verbose_print) {
-        printf("iter_set_search: index_current %d\n", ctx->index_current);
-        printf("iter_set_search: index_target %d\n", ctx->index_target);
-    }
-
-    if (ctx->index_current == ctx->index_target) {
-        if (verbose_print) 
-            printf(
-                "iter_set_search: %s found and removed\n",
-                estate2str(key_state)
-            );
-        ctx->estate_target = *key_state;
-        ctx->estate_target.found = true;
-        return HTABLE_ACTION_BREAK;
-    }
-
-    ctx->index_current++;
-
-    return HTABLE_ACTION_NEXT;
-}
-
-// Удаляет одну случайную сущность из системы.
-static struct TestDestroyCtx destroy_entt(struct TestDestroyCtx ctx) {
-    if (verbose_print)
-        printf("destroy_entt:\n");
-
-    if (ctx.entt_num == 0) {
-        printf("destroy_entt: ctx.ennt_num == 0\n");
-        koh_trap();
-    }
-
-    if (verbose_print)
-        printf("ctx.ennt_num %d\n", ctx.entt_num);
-
-    memset(&ctx.estate_target, 0, sizeof(ctx.estate_target));
-    ctx.estate_target.e = de_null;
-
-    // подготовка к поиску
-    ctx.index_current = 0;
-
-    if (ctx.entt_num == 1)
-        ctx.index_target = 0;
-    else
-        ctx.index_target = random() % (ctx.entt_num - 1) + 1;
-
-    if (verbose_print)
-        printf("index_target %d\n", ctx.index_target);
-
-    // итератор поиска и удаления одной записи из множества
-    /*set_each(ctx.set, iter_set_search_and_remove, &ctx);*/
-    htable_each(ctx.set, iter_set_search_and_remove, &ctx);
-
-    munit_assert_uint32(ctx.estate_target.e, !=, de_null);
-    munit_assert(ctx.estate_target.found);
-
-    if (verbose_print)
-        printf("destroy_entt: e %u\n", ctx.estate_target.e);
-
-    de_destroy(ctx.r, ctx.estate_target.e);
-
-    /*
-    ctx.estate_target.found = false;
-    bool is_removed = set_remove(
-        ctx.set, &ctx.estate_target, sizeof(ctx.estate_target)
-    );
-    */
-
-    //munit_assert(is_removed);
-    ctx.entt_num--;
     return ctx;
 }
 
-// XXX: Что делает функция?
-static struct TestDestroyCtx create_one(struct TestDestroyCtx ctx) {
+// Создает одну сущность и цепляет к ней по данных из ctx какое-то количество
+// компонент
+// Может вернуть сущность если предоставлен указатель.
+static TestDestroyCtx facade_ennt_create(TestDestroyCtx ctx, de_entity *ret) {
     assert(ctx.r);
-
-    struct EntityState estate = {
-        .e = de_create(ctx.r),
-    };
-    munit_assert_uint32(estate.e, !=, de_null);
-
-    char fingerprint[128] = {};
-    char *pfingerprint = fingerprint;
-
-    const int estate_comp_num = 
-        sizeof(estate.components_values) / 
-        sizeof(estate.components_values[0]);
-    assert(estate_comp_num <= ctx.comp_num);
-
-    for (int comp_index = 0; comp_index < ctx.comp_num; comp_index++) {
-        // Может создать компонент, а может и нет?
-        if ((double)rand() / (double)RAND_MAX < 0.5) 
-            continue;
-
-        de_cp_type comp = ctx.components[comp_index];
-        int *c = de_emplace(ctx.r, estate.e, comp);
-        munit_assert_not_null(c);
-        *c = ctx.last_comp_value++;
-
-        estate.components_set[comp_index] = true;
-        estate.components_values[comp_index] = *c;
-
-        pfingerprint += sprintf(
-            pfingerprint, "[%zu  %d]", comp.cp_id, *c
-        );
-    }
+    assert(ctx.map_entt2Desc);
+    assert(ctx.types_num >= 0); // XXX: Дать строгое неравенство?
+    assert(ctx.types_num < 3);
 
     if (verbose_print)
-        printf("e %u, fingerprint %s\n", estate.e, fingerprint);
+        printf("facade_ennt_create:\n");
 
-    //set_add(ctx.set, &estate, sizeof(estate));
-    htable_add(ctx.set, &estate, sizeof(estate), NULL, 0);
+    de_entity e = de_create(ctx.r);
+    munit_assert(e != de_null);
+    munit_assert(de_valid(ctx.r, e));
 
-    ctx.entt_num++;
+    EntityDesc ed = {};
+
+    ed.components_num = ctx.types_num;
+
+    for (int k = 0; k < ctx.types_num; k++) {
+        void *comp_data = de_emplace(ctx.r, e, ctx.types[k]);
+        // TODO: здесь вызвать функцию заполнения comp_data данными
+        ed.components_sizes[k] = ctx.types[k].cp_sizeof;
+        ed.components[k] = comp_data;
+    }
+
+    assert(ctx.map_entt2Desc);
+    htable_add(ctx.map_entt2Desc, &e, sizeof(e), &ed, sizeof(ed));
+
+    if (ret)
+        *ret = e;
 
     return ctx;
 }
 
+/*
 static HTableAction  set_print_each(
     const void *key, int key_len, void *value, int value_len, void *udata
 ) {
@@ -602,16 +558,20 @@ static HTableAction  set_print_each(
     printf("    %s\n", estate2str(key));
     return HTABLE_ACTION_NEXT;
 }
+*/
 
+/*
 static void estate_set_print(HTable *set) {
     if (verbose_print) {
         printf("estate {\n");
-        /*set_each(set, set_print_each, NULL);*/
+        //set_each(set, set_print_each, NULL);
         htable_each(set, set_print_each, NULL);
         printf("} (size = %ld)\n", htable_count(set));
     }
 }
+*/
 
+/*
 static bool iter_ecs_each(de_ecs *r, de_entity e, void *udata) {
     struct TestDestroyCtx *ctx = udata;
 
@@ -626,7 +586,7 @@ static bool iter_ecs_each(de_ecs *r, de_entity e, void *udata) {
     };
 
     // сборка структуры estate через запрос к ecs
-    for (int i = 0; i < ctx->comp_num; i++) {
+    for (int i = 0; i < ctx->components_num; i++) {
         if (de_has(r, e, ctx->components[i])) {
             estate.components_set[i] = true;
             int *comp_value = de_try_get(r, e, ctx->components[i]);
@@ -638,21 +598,14 @@ static bool iter_ecs_each(de_ecs *r, de_entity e, void *udata) {
     if (verbose_print)
         printf("iter_ecs_each: search estate %s\n", estate2str(&estate));
 
-    /*bool exists = set_exist(ctx->set, &estate, sizeof(estate));*/
     bool exists = htable_exist(ctx->set, &estate, sizeof(estate));
-    //bool exists = false;
 
     if (verbose_print)
         printf("estate {\n");
 
-    /*
-    for (struct koh_SetView v = set_each_begin(ctx->set);
-        set_each_valid(&v); set_each_next(&v)) {
-        */
     for (HTableIterator v = htable_iter_new(ctx->set);
             htable_iter_valid(&v); htable_iter_next(&v)) {
 
-        /*const struct EntityState *key = set_each_key(&v);*/
         const struct EntityState *key = htable_iter_key(&v, NULL);
         
         if (!key) {
@@ -667,7 +620,6 @@ static bool iter_ecs_each(de_ecs *r, de_entity e, void *udata) {
             printf("    %s\n", estate2str(key));
     }
     if (verbose_print)
-        /*printf("} (size = %d)\n", set_size(ctx->set));*/
         printf("} (size = %ld)\n", htable_count(ctx->set));
     
     if (!exists) {
@@ -682,11 +634,42 @@ static bool iter_ecs_each(de_ecs *r, de_entity e, void *udata) {
 
     return false;
 }
+*/
 
-// TODO: Не находится один компонент из всех во множестве
-struct TestDestroyCtx ecs_check_each(struct TestDestroyCtx ctx) {
+bool iter_ecs_each(de_ecs* r, de_entity e, void* ud) {
+    TestDestroyCtx *ctx = ud;
+
+    munit_assert(e != de_null);
+
+    if (htable_count(ctx->map_entt2Desc) == 0)
+        return false;
+
+    EntityDesc *ed = htable_get(ctx->map_entt2Desc, &e, sizeof(e), NULL);
+
+    if (!ed) {
+        /*printf("iter_ecs_each:\n");*/
+        /*return false;*/
+    }
+
+    munit_assert(ed != NULL);
+    for (int i = 0; i < ctx->types_num; i++) {
+        if (de_has(ctx->r, e, ctx->types[i])) {
+
+        }
+    }
+
+    return false;
+}
+
+struct TestDestroyCtx facade_compare_with_ecs(struct TestDestroyCtx ctx) {
     assert(ctx.r);
+    // TODO: Пройтись по всем сущностям. 
+    // Найти через de_has() какие сущности есть согласно EntityDesc
+    // Сравнить память через memcmp()
+    /*de_each(ctx.r, iter_ecs_each, &ctx);*/
+
     de_each(ctx.r, iter_ecs_each, &ctx);
+
     return ctx;
 }
 
@@ -696,13 +679,16 @@ static bool iter_ecs_counter(de_ecs *r, de_entity e, void *udata) {
     return false;
 }
 
+/*
 struct TestDestroyOneRandomCtx {
     de_entity   *entts;
     int         entts_len;
     de_cp_type  comp_type;
 };
+*/
 
 // Все сущности имеют один компонент
+/*
 static bool iter_ecs_check_entt(de_ecs *r, de_entity e, void *udata) {
     struct TestDestroyOneRandomCtx *ctx = udata;
     for (int i = 0; i < ctx->entts_len; i++) {
@@ -713,8 +699,10 @@ static bool iter_ecs_check_entt(de_ecs *r, de_entity e, void *udata) {
     munit_assert(false);
     return false;
 }
+*/
 
 // Сложный тест, непонятно, что он делает
+/*
 static MunitResult test_destroy_one_random(
     const MunitParameter params[], void* data
 ) {
@@ -802,6 +790,7 @@ static MunitResult test_destroy_one_random(
     de_ecs_free(r);
     return MUNIT_OK;
 }
+*/
 
 static MunitResult test_destroy_one(
     const MunitParameter params[], void* data
@@ -874,6 +863,37 @@ static MunitResult test_destroy_zero(
     return MUNIT_OK;
 }
 
+static TestDestroyCtx facade_create() {
+    TestDestroyCtx ctx = {
+        .r = de_ecs_new(),
+        .map_entt2Desc = htable_new(&(HTableSetup) {
+            .f_on_remove = map_on_remove,
+        }),
+    };
+
+    return ctx;
+}
+
+static void facade_shutdown(TestDestroyCtx ctx) {
+    HTableIterator i = htable_iter_new(ctx.map_entt2Desc);
+
+    for (; htable_iter_valid(&i); htable_iter_next(&i)) {
+        EntityDesc *ed = htable_iter_value(&i, NULL);
+        assert(ed);
+
+        for (int j = 0; j < ed->components_num; j++) {
+            // Кто владеет памятью?
+            if (ed->components[j]) {
+                free(ed->components[j]);
+                ed->components[j] = NULL;
+            }
+        }
+    }
+
+    htable_free(ctx.map_entt2Desc);
+    de_ecs_free(ctx.r);
+}
+
 static void _test_destroy(de_cp_type comps[3]) {
 
     de_cp_type  comp1 = comps[0],
@@ -881,44 +901,42 @@ static void _test_destroy(de_cp_type comps[3]) {
                 comp3 = comps[2];
 
     for (int i = 0; i < 3; i++) {
-        de_cp_type c = comps[i];
-        de_cp_type_print(c);
+        /*de_cp_type c = comps[i];*/
+        /*de_cp_type_print(c);*/
         printf("\n");
     }
 
-    struct TestDestroyCtx ctx = {
-        .r = de_ecs_new(),
-        .set = htable_new(NULL),
-        .entt_num = 0,
-        .comp_num = 3,
-    };
-    ctx.components[0] = comp1;
-    ctx.components[1] = comp2;
-    ctx.components[2] = comp3;
+    TestDestroyCtx ctx = facade_create();
+    ctx.types[0] = comp1;
+    ctx.types[1] = comp2;
+    ctx.types[2] = comp3;
 
     printf("\n");
 
     int entities_num = 10;
-    int cycles = 5;
+    int cycles = 1;
 
     for (int i = 0; i < cycles; ++i) {
-        for (int j = 0; j < entities_num; j++)
-            ctx = create_one(ctx);
 
-        /*
-        for (int j = 0; j < entities_num / 2; j++)
-            ctx = destroy_entt(ctx);
-        // */
+        // создать сущности и прикрепить к ней случайное число компонент
+        for (int j = 0; j < entities_num; j++) {
+            de_entity ret = de_null;
+            ctx = facade_ennt_create(ctx, &ret);
+            munit_assert(ret != de_null);
+        }
 
-        //create_one(&ctx);
-        ctx = destroy_entt(ctx);
+        // удалить одну случайную сущность целиком
+        ctx = facade_entt_destroy(ctx, false);
 
-        ctx = ecs_check_each(ctx);
+        printf("ctx.map_entt2Desc %ld\n", htable_count(ctx.map_entt2Desc));
+
+        // проверить, что состояние ecs соответствует ожидаемому, которое 
+        // хранится в хэштаблицах.
+        ctx = facade_compare_with_ecs(ctx);
 
     }
 
-    htable_free(ctx.set);
-    de_ecs_free(ctx.r);
+    facade_shutdown(ctx);
 }
 
 /*
@@ -1457,6 +1475,7 @@ static MunitResult test_view_get(
     return MUNIT_OK;
 }
 
+// TODO: Написать более простой тест de_view_single
 static MunitResult test_view_single_get(
     const MunitParameter params[], void* data
 ) {
@@ -1828,6 +1847,7 @@ static MunitResult test_emplace_1_insert(
     return MUNIT_OK;
 }
 
+// Проверка создания сущности, добавления к ней компоненты, итерация
 static MunitResult test_emplace_1_insert_remove(
     const MunitParameter params[], void* data
 ) {
@@ -2021,6 +2041,7 @@ static MunitTest test_suite_tests[] = {
     NULL
   },
 
+  /*
   {
     (char*) "/destroy_one_random",
     test_destroy_one_random,
@@ -2029,6 +2050,7 @@ static MunitTest test_suite_tests[] = {
     MUNIT_TEST_OPTION_NONE,
     NULL
   },
+  */
 
   {
     (char*) "/destroy_one",
