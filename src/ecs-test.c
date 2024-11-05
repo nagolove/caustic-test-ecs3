@@ -668,7 +668,14 @@ struct TestDestroyCtx facade_compare_with_ecs(struct TestDestroyCtx ctx) {
     // Сравнить память через memcmp()
     /*de_each(ctx.r, iter_ecs_each, &ctx);*/
 
-    de_each(ctx.r, iter_ecs_each, &ctx);
+    // de_each(ctx.r, iter_ecs_each, &ctx);
+
+    de_each_iter i = de_each_begin(ctx.r);
+    for (; de_each_valid(&i); de_each_next(&i)) {
+        de_entity e = de_each_entity(&i);
+        EntityDesc *ed = htable_get(ctx.map_entt2Desc, &e, sizeof(e), NULL);
+        munit_assert(ed != NULL);
+    }
 
     return ctx;
 }
@@ -1818,7 +1825,8 @@ static MunitResult test_emplace_1_insert(
         de_entity entt = de_create(r);
         htable_add(set_e, &entt, sizeof(entt), NULL, 0);
 
-        Comp_1 comp = Comp_1_new(&rng, entt);
+        Comp_1 comp = {};
+        Comp_1_new(&rng, entt, &comp);
 
         // Добавить компонент к сущности
         Comp_1 *c = de_emplace(r, entt, cp_type_1);
@@ -1867,7 +1875,9 @@ static MunitResult test_emplace_1_insert_remove(
         // создать сущность
         de_entity entt = de_create(r);
 
-        Comp_1 comp = Comp_1_new(&rng, entt);
+        Comp_1 comp = {};
+        Comp_1_new(&rng, entt, &comp);
+
         // Добавить компонент
         Comp_1 *c = de_emplace(r, entt, cp_type_1);
         assert(c);
@@ -1932,7 +1942,81 @@ static MunitResult test_new_free(
     return MUNIT_OK;
 }
 
+void _test_ecs_each_iter(int num) {
+    assert(num >= 0);
+    de_ecs *r = de_ecs_new();
+
+    HTable *t = htable_new(NULL);
+
+    for (int i = 0; i < num; i++) {
+        // Создать сущность
+        de_entity e = de_create(r);
+        bool val = false;
+        // Добавить в таблицу значение сущности и флаг ее просмотра
+        htable_add(t, &e, sizeof(e), &val, sizeof(val));
+    }
+
+    // Счетчик итераций
+    int cnt = 0;
+    // Проверка итератора
+    for (de_each_iter i = de_each_begin(r);
+        de_each_valid(&i); de_each_next(&i)) {
+        de_entity e = de_each_entity(&i);
+        // Сущность должна существовать
+        munit_assert(e != de_null);
+        // Флаг просмотра
+        bool *val = htable_get(t, &e, sizeof(e), NULL);
+        // Флаг должен существовать
+        munit_assert_not_null(val);
+        // Флаг не должен быть установлен
+        munit_assert(*val == false);
+        // Установка флага
+        *val = true;
+        cnt++;
+    }
+
+    HTableIterator i = htable_iter_new(t);
+    // Проверка работы de_each_iter
+    for (; htable_iter_valid(&i); htable_iter_next(&i)) {
+        de_entity *e = htable_iter_key(&i, NULL);
+        munit_assert_not_null(e);
+        munit_assert(*e != de_null);
+        bool *val = NULL;
+        val = htable_iter_value(&i, NULL);
+        munit_assert_not_null(val);
+        // Главное - флаг должен быть установлен
+        munit_assert(*val == true);
+    }
+
+    printf("test_ecs_each_iter: cnt %d, num %d\n", cnt, num);
+    // Дополнительная проверка через счетчик
+    munit_assert(cnt == num);
+
+    htable_free(t);
+    de_ecs_free(r);
+}
+
+// Проверка итерации по сущностям
+static MunitResult test_ecs_each_iter(
+    const MunitParameter params[], void* data
+) {
+    _test_ecs_each_iter(0);
+    _test_ecs_each_iter(10);
+    _test_ecs_each_iter(1000);
+    return MUNIT_OK;
+}
+
+
 static MunitTest test_suite_tests[] = {
+
+    {
+      (char*) "/ecs_each_iter",
+      test_ecs_each_iter,
+      NULL,
+      NULL,
+      MUNIT_TEST_OPTION_NONE,
+      NULL
+    },
 
     {
         (char*) "/new_free",
