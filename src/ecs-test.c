@@ -469,6 +469,7 @@ typedef struct TestDestroyCtx {
     // Указатели на функции для заполнения компонент
     ComponentCreator    creators[3];
 
+    // de_entity => EntityDesc
     HTable              *map_entt2Desc;
 } TestDestroyCtx;
 
@@ -481,6 +482,9 @@ static struct TestDestroyCtx facade_entt_destroy(
 
     if (verbose_print)
         printf("facade_entt_destroy:\n");
+
+    // XXX: Отладочная детерминированная установка ГПСЧ
+    srand(42);
 
     int n = rand() % htable_count(ctx.map_entt2Desc);
     printf("facade_entt_destroy: n %d\n", n);
@@ -496,10 +500,10 @@ static struct TestDestroyCtx facade_entt_destroy(
             EntityDesc *ed = htable_iter_value(&i, NULL);
             munit_assert(ed != NULL);
 
-            for (int t = 0; ed->components_num; t++) {
+            for (int t = 0; t < ed->components_num; t++) {
                 if (ed->components[t]) {
                     // Кто владеет памятью?
-                    free(ed->components[t]);
+                    /*free(ed->components[t]);*/
                     ed->components[t] = NULL;
                 }
             }
@@ -507,9 +511,16 @@ static struct TestDestroyCtx facade_entt_destroy(
             int key_len = 0;
             void *key = htable_iter_key(&i, &key_len);
             htable_remove(ctx.map_entt2Desc, key, key_len);
+
+            de_entity e = de_null;
+            e = *(de_entity*)key;
+            de_destroy(ctx.r, e);
+
             break;
         }
     }
+
+    // TODO: Удалить сущность из de_ecs
 
     return ctx;
 }
@@ -520,8 +531,8 @@ static struct TestDestroyCtx facade_entt_destroy(
 static TestDestroyCtx facade_ennt_create(TestDestroyCtx ctx, de_entity *ret) {
     assert(ctx.r);
     assert(ctx.map_entt2Desc);
-    assert(ctx.types_num >= 0); // XXX: Дать строгое неравенство?
-    assert(ctx.types_num < 3);
+    assert(ctx.types_num > 0); 
+    assert(ctx.types_num < 4);
 
     if (verbose_print)
         printf("facade_ennt_create:\n");
@@ -542,8 +553,19 @@ static TestDestroyCtx facade_ennt_create(TestDestroyCtx ctx, de_entity *ret) {
     }
 
     assert(ctx.map_entt2Desc);
+
+    printf("facade_create: htable_add e %u\n", e);
     htable_add(ctx.map_entt2Desc, &e, sizeof(e), &ed, sizeof(ed));
 
+    /*htable_print(ctx.map_entt2Desc);*/
+    /*
+    char *s = htable_print_tabular_alloc(ctx.map_entt2Desc);
+    if (s) {
+        printf("%s\n", s);
+        free(s);
+    }
+
+    // */
     if (ret)
         *ret = e;
 
@@ -661,6 +683,14 @@ bool iter_ecs_each(de_ecs* r, de_entity e, void* ud) {
     return false;
 }
 
+void de_entity_print(de_ecs *r, de_entity e) {
+    assert(r);
+    if (e == de_null)
+        printf("de_entity_print: de_null\n");
+    else
+        printf("de_entity_print: e %u\n", e);
+}
+
 struct TestDestroyCtx facade_compare_with_ecs(struct TestDestroyCtx ctx) {
     assert(ctx.r);
     // TODO: Пройтись по всем сущностям. 
@@ -670,10 +700,58 @@ struct TestDestroyCtx facade_compare_with_ecs(struct TestDestroyCtx ctx) {
 
     // de_each(ctx.r, iter_ecs_each, &ctx);
 
+    de_entity e = de_null;
+
+    e = 0;
+    printf(
+        "htable_get: e %u, %p\n", 
+        e,
+        htable_get(ctx.map_entt2Desc, &e, sizeof(e), NULL)
+    );
+
+    e = 1;
+    printf(
+        "htable_get: e %u, %p\n", 
+        e,
+        htable_get(ctx.map_entt2Desc, &e, sizeof(e), NULL)
+    );
+
+    e = 2;
+    printf(
+        "htable_get: e %u, %p\n", 
+        e,
+        htable_get(ctx.map_entt2Desc, &e, sizeof(e), NULL)
+    );
+
+    e = 3;
+    printf(
+        "htable_get: e %u, %p\n", 
+        e,
+        htable_get(ctx.map_entt2Desc, &e, sizeof(e), NULL)
+    );
+
+    e = 4;
+    printf(
+        "htable_get: e %u, %p\n", 
+        e,
+        htable_get(ctx.map_entt2Desc, &e, sizeof(e), NULL)
+    );
+
+    e = 5;
+    printf(
+        "htable_get: e %u, %p\n", 
+        e,
+        htable_get(ctx.map_entt2Desc, &e, sizeof(e), NULL)
+    );
+
     de_each_iter i = de_each_begin(ctx.r);
     for (; de_each_valid(&i); de_each_next(&i)) {
         de_entity e = de_each_entity(&i);
+        de_entity_print(ctx.r, e);
         EntityDesc *ed = htable_get(ctx.map_entt2Desc, &e, sizeof(e), NULL);
+        if (!ed) {
+            printf("facade_compare_with_ecs: ed == NULL with e = %u\n", e);
+        }
         munit_assert(ed != NULL);
     }
 
@@ -870,15 +948,42 @@ static MunitResult test_destroy_zero(
     return MUNIT_OK;
 }
 
+const char *map_val2str(const void *data, int data_len) {
+    static char buf[128] = {}, *pbuf = buf;
+    assert(data);
+    assert(data_len > 0);
+    const EntityDesc *ed = data;
+
+    for (int i = 0; i < 3; i++) {
+        // Максимальный размер компонента
+        assert(ed->components_sizes[i] < 128 * 10);
+        assert(ed->components_num > 0);
+        assert(ed->components_num < 100);
+    }
+
+    for (int i = 0; i < ed->components_num; i++) {
+        de_cp_type_print(ed->types[i]);
+    }
+
+    printf("map_val2str:\n");
+
+    return buf;
+}
+
+static const char *EntityDesc_to_str(EntityDesc *ed) {
+    return map_val2str(ed, sizeof(*ed));
+}
+
 static TestDestroyCtx facade_create() {
-    TestDestroyCtx ctx = {
+    return (TestDestroyCtx) {
         .r = de_ecs_new(),
         .map_entt2Desc = htable_new(&(HTableSetup) {
+            .f_hash = koh_hasher_mum,
             .f_on_remove = map_on_remove,
+            .f_key2str = htable_u32_str,
+            .f_val2str = map_val2str,
         }),
     };
-
-    return ctx;
 }
 
 static void facade_shutdown(TestDestroyCtx ctx) {
@@ -891,7 +996,7 @@ static void facade_shutdown(TestDestroyCtx ctx) {
         for (int j = 0; j < ed->components_num; j++) {
             // Кто владеет памятью?
             if (ed->components[j]) {
-                free(ed->components[j]);
+                /*free(ed->components[j]);*/
                 ed->components[j] = NULL;
             }
         }
@@ -903,10 +1008,6 @@ static void facade_shutdown(TestDestroyCtx ctx) {
 
 static void _test_destroy(de_cp_type comps[3]) {
 
-    de_cp_type  comp1 = comps[0],
-                comp2 = comps[1],
-                comp3 = comps[2];
-
     for (int i = 0; i < 3; i++) {
         /*de_cp_type c = comps[i];*/
         /*de_cp_type_print(c);*/
@@ -914,9 +1015,10 @@ static void _test_destroy(de_cp_type comps[3]) {
     }
 
     TestDestroyCtx ctx = facade_create();
-    ctx.types[0] = comp1;
-    ctx.types[1] = comp2;
-    ctx.types[2] = comp3;
+    ctx.types[0] = comps[1];
+    ctx.types[1] = comps[2];
+    ctx.types[2] = comps[3];
+    ctx.types_num = 3;
 
     printf("\n");
 
@@ -933,7 +1035,7 @@ static void _test_destroy(de_cp_type comps[3]) {
         }
 
         // удалить одну случайную сущность целиком
-        ctx = facade_entt_destroy(ctx, false);
+        /*ctx = facade_entt_destroy(ctx, false);*/
 
         printf("ctx.map_entt2Desc %ld\n", htable_count(ctx.map_entt2Desc));
 
