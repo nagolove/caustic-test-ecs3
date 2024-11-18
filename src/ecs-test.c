@@ -7,7 +7,7 @@
 #include "koh_hashers.h"
 
 static const MunitSuite test_suite = {
-  "de_ecs", 
+  "de_ecs/", 
   NULL,
   &test_de_ecs_suite_internal,
   1, MUNIT_SUITE_OPTION_NONE
