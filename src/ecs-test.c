@@ -15,6 +15,6 @@ static const MunitSuite test_suite = {
 
 int main(int argc, char **argv) {
     koh_hashers_init();
-    e_test_init();
+    //e_test_init();
     return munit_suite_main(&test_suite, (void*) "µnit", argc, argv);
 }

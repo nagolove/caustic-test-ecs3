@@ -21,6 +21,7 @@ return {
 
 
       artifact = "ecs-test",
+      kind = 'app',
       main = "main.c",
       src = "src",
       not_dependencies = {
